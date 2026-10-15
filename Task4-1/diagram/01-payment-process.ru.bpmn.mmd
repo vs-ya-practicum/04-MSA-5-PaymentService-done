@@ -4,9 +4,9 @@ layout elk
 pool payment_process "Процесс обработки\ платежа"
   lane saga "Сага платежа"
     message start payment_initiated "Инициация платежа"
-    service task debit_payer "Списать средства\ плательщика"
+    service task debit_payer "DEBIT_PAYER_FUNDS\ Списать средства\ плательщика"
       error boundary debit_failed "Ошибка списания"
-    subprocess transaction_checks "Выполнить проверки\ операции"
+    subprocess transaction_checks "PERFORM_FRAUD_CHECK\ Выполнить проверки\ операции"
       parallel gate checks_fork
         port checks_fraud_out n
         port checks_external_out s
@@ -31,23 +31,24 @@ pool payment_process "Процесс обработки\ платежа"
     exclusive gate manual_outcome "Платёж одобрен?"
       port manual_approved_out n
       port manual_denied_out s
-    service task transfer_to_payee "Перевести средства\ получателю"
+    service task transfer_to_payee "TRANSFER_FUNDS_TO_PAYEE\ Перевести средства\ получателю"
       error boundary transfer_failed "Ошибка перевода"
     comment transfer_pivot "Pivot-точка —\ перевод получателю\ необратим" e
     parallel gate suspicious_fork
       port security_notification_out n
       port suspicious_refund_out s
-    send task notify_security "Уведомить Security\ System"
+    send task notify_security "NOTIFY_SECURITY_SYSTEM\ Уведомить Security\ System"
     parallel gate suspicious_join
-    compensation task refund_payer "Автоматически\ вернуть средства\ плательщику"
+    compensation task refund_payer "REFUND_PAYER\ Автоматически вернуть\ средства плательщику"
+    service task rollback_payment_status "ROLLBACK_PAYMENT_STATUS\ Восстановить статус\ платежа"
     exclusive gate refund_result "Причина возврата?"
       port suspicious_refund_outcome n
       port other_refund_outcome s
     exclusive gate payment_result "Результат платежа?"
       port completed_notification_out n
       port refunded_notification_out s
-    send task notify_completed "Отправить\ уведомление о\ завершённом платеже"
-    send task notify_refunded "Отправить\ уведомление о\ возврате средств"
+    send task notify_completed "SEND_PAYMENT_STATUS_NOTIFICATION\ Уведомить о завершении\ платежа"
+    send task notify_refunded "SEND_PAYMENT_STATUS_NOTIFICATION\ Уведомить о возврате\ средств"
     end payment_completed "PAYMENT_COMPLETED"
     end payment_refunded "PAYMENT_REFUNDED"
     error end payment_failed "PAYMENT_FAILED_SYSTEM"
@@ -80,7 +81,8 @@ pool payment_process "Процесс обработки\ платежа"
     security_notification_out --> notify_security
     suspicious_refund_out --> refund_payer
     notify_security --> suspicious_join
-    refund_payer --> refund_result
+    refund_payer --> rollback_payment_status
+    rollback_payment_status --> refund_result
     suspicious_refund_outcome --> suspicious_join "подозрительная\ операция"
     other_refund_outcome --> payment_result "отклонён или\ завершился ошибкой"
     suspicious_join --> payment_result
