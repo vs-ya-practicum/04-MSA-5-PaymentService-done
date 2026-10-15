@@ -1,0 +1,89 @@
+bpmn LR
+layout elk
+
+pool payment_process "Payment process"
+  lane saga "Payment Saga"
+    message start payment_initiated "Payment initiated"
+    service task debit_payer "Debit payer funds"
+      error boundary debit_failed "Debit failed"
+    subprocess transaction_checks "Perform transaction checks"
+      parallel gate checks_fork
+        port checks_fraud_out n
+        port checks_external_out s
+      service task fraud_check "Perform anti-fraud check"
+      service task external_checks "Perform compliance and restriction-control checks"
+      parallel gate checks_join
+      checks_fraud_out --> fraud_check
+      checks_external_out --> external_checks
+      fraud_check --> checks_join
+      external_checks --> checks_join
+      timer boundary check_cutoff "Check cut-off"
+      error boundary check_failed "Check failed"
+    exclusive gate fraud_outcome "FraudCheck outcome?"
+      port fraud_approved_out n
+      port fraud_suspicious_out s
+    user task manual_review "Manual review by operator"
+    event gate await_manual_review "Await manual-review decision or cut-off"
+      port manual_decision_out n
+      port manual_cutoff_out s
+    message catch manual_decision "Manual-review decision"
+    timer catch manual_review_cutoff "20 minutes"
+    exclusive gate manual_outcome "Payment approved?"
+      port manual_approved_out n
+      port manual_denied_out s
+    service task transfer_to_payee "Transfer funds to payee"
+      error boundary transfer_failed "Transfer failed"
+    parallel gate suspicious_fork
+      port security_notification_out n
+      port suspicious_refund_out s
+    send task notify_security "Notify Security System"
+    parallel gate suspicious_join
+    compensation task refund_payer "Automatically refund payer"
+    exclusive gate refund_result "Refund reason?"
+      port suspicious_refund_outcome n
+      port other_refund_outcome s
+    exclusive gate payment_result "Payment result?"
+      port completed_notification_out n
+      port refunded_notification_out s
+    send task notify_completed "Send completed-payment notification"
+    send task notify_refunded "Send refunded-payment notification"
+    end payment_completed "PAYMENT_COMPLETED"
+    end payment_refunded "PAYMENT_REFUNDED"
+    error end payment_failed "PAYMENT_FAILED_SYSTEM"
+
+    payment_initiated --> debit_payer
+    debit_payer --> transaction_checks
+    debit_failed --> payment_failed
+
+    transaction_checks --> fraud_outcome
+    check_cutoff --> transfer_to_payee "default: approved"
+    check_failed --> refund_payer
+
+    fraud_approved_out --> transfer_to_payee "approved"
+    fraud_outcome --> manual_review "manual review required"
+    fraud_outcome --> refund_payer "denied"
+    fraud_suspicious_out --> suspicious_fork "suspicious"
+
+    manual_review --> await_manual_review
+    manual_decision_out --> manual_decision "decision received"
+    manual_cutoff_out --> manual_review_cutoff "no decision"
+    manual_decision --> manual_outcome
+    manual_review_cutoff --> transfer_to_payee "default: approved"
+    manual_approved_out --> transfer_to_payee "approved"
+    manual_denied_out --> refund_payer "denied"
+
+    transfer_to_payee --> payment_result
+    transfer_failed --> refund_payer
+
+    security_notification_out --> notify_security
+    suspicious_refund_out --> refund_payer
+    notify_security --> suspicious_join
+    refund_payer --> refund_result
+    suspicious_refund_outcome --> suspicious_join "suspicious"
+    other_refund_outcome --> payment_result "denied or failed"
+    suspicious_join --> payment_result
+
+    completed_notification_out --> notify_completed "completed"
+    refunded_notification_out --> notify_refunded "refunded"
+    notify_completed --> payment_completed
+    notify_refunded --> payment_refunded
