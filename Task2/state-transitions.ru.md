@@ -1,5 +1,12 @@
 # Таблица переходов платёжной операции
 
+<details>
+<summary>STA-01 Payment State</summary>
+
+![STA-01 Payment State](./STA-01-payment.state.svg)
+    
+</details>
+
 <table>
   <thead>
     <tr>
