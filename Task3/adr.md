@@ -19,7 +19,7 @@ OrchestrPay использует Camunda BPMN для выполнения Saga-�
 <details>
 <summary>Компоненты оркестрации в Payment Service</summary>
 
-![Компоненты оркестрации в Payment Service](../../engineering/model/task3/diagrams/.svg/02-payment-service-owned-orchestration.component.c4.svg)
+![Компоненты оркестрации в Payment Service](./02-payment-service-owned-orchestration.component.c4.svg)
 
 </details>
 
@@ -30,7 +30,7 @@ OrchestrPay использует Camunda BPMN для выполнения Saga-�
 <details>
 <summary>Компоненты отдельного сервиса-оркестратора</summary>
 
-![Компоненты отдельного сервиса-оркестратора](../../engineering/model/task3/diagrams/.svg/02-separate-orchestrator.component.c4.svg)
+![Компоненты отдельного сервиса-оркестратора](./02-separate-orchestrator.component.c4.svg)
 
 </details>
 
