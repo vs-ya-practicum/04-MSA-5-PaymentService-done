@@ -19,7 +19,7 @@ OrchestrPay использует Camunda BPMN для выполнения Saga-�
 <details>
 <summary>Компоненты оркестрации в Payment Service</summary>
 
-![Компоненты оркестрации в Payment Service](./02-payment-service-owned-orchestration.component.c4.svg)
+![Компоненты оркестрации в Payment Service](./01-payment-service-owned-orchestration.component.c4.svg)
 
 </details>
 
