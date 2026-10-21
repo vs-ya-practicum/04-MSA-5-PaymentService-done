@@ -10,7 +10,7 @@
 > [!NOTE]
 > Критическое требование: стоимость ошибочного проведения платежа значительно выше потенциальных потерь от отклонения корректного платежа.
 
-<table>
+<table style="font-size: 0.85em;">
   <thead>
     <tr>
       <th style="white-space: nowrap;">Исходное состояние</th>
@@ -44,8 +44,8 @@
       <td><code>PaymentApprovedFact</code></td>
     </tr>
     <tr>
-      <td><code>5. PAYMENT_APPROVED</code></td>
-      <td>Истёк cut-off time ожидания результата проверки.</td>
+      <td><code>7. PAYMENT_REJECTED_FRAUDCHECK</code></td>
+      <td>Истёк cut-off time ожидания результата проверки; платёж отклонён, <code>refund_reason=check_cutoff</code>.</td>
     </tr>
     <tr>
       <td><code>7. PAYMENT_REJECTED_FRAUDCHECK</code></td>
@@ -65,8 +65,8 @@
       <td><code>ManualReviewDecisionFact</code> — решение оператора: одобрено.</td>
     </tr>
     <tr>
-      <td><code>5. PAYMENT_APPROVED</code></td>
-      <td>Истекли 20 минут ожидания решения оператора.</td>
+      <td><code>7. PAYMENT_REJECTED_FRAUDCHECK</code></td>
+      <td>Истекли 20 минут ожидания решения оператора; платёж отклонён, <code>refund_reason=manual_review_cutoff</code>.</td>
     </tr>
     <tr>
       <td><code>7. PAYMENT_REJECTED_FRAUDCHECK</code></td>
@@ -88,11 +88,6 @@
     </tr>
     <tr>
       <td style="white-space: nowrap; vertical-align: top;"><code>8. PAYMENT_REJECTED_SUSPICIOUS</code></td>
-      <td><code>10. PAYMENT_REFUNDED</code></td>
-      <td><code>PaymentRefundedFact</code></td>
-    </tr>
-    <tr>
-      <td style="white-space: nowrap; vertical-align: top;"><code>9. PAYMENT_FAILED_SYSTEM</code></td>
       <td><code>10. PAYMENT_REFUNDED</code></td>
       <td><code>PaymentRefundedFact</code></td>
     </tr>
