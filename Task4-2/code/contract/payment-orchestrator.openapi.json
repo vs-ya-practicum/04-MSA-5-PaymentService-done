@@ -1,0 +1,281 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Payment Orchestrator API",
+    "version": "0.1.0",
+    "description": "HTTP API for submitting payment requests to the payment process."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000",
+      "description": "Local Docker Compose endpoint"
+    }
+  ],
+  "paths": {
+    "/payments": {
+      "post": {
+        "operationId": "submitPayment",
+        "summary": "Submit a payment for processing",
+        "description": "Validates the payment request, trims leading and trailing whitespace from its string fields, and publishes a PaymentInitiatedFact message to Zeebe. A successful response confirms the publish call completed; it does not confirm that the message correlated with a process instance or report the eventual process outcome. Request bodies are limited to 16 KiB.",
+        "tags": ["Payments"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentInitiationRequest"
+              },
+              "example": {
+                "payment_id": "payment-001",
+                "payer_id": "payer-001",
+                "payee_id": "payee-001",
+                "currency": "RUB",
+                "amount": 100
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The Zeebe message publication call succeeded. This does not confirm that a process instance was created or report the payment outcome.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentAcceptedResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is invalid JSON, exceeds 16 KiB, or contains invalid payment fields.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested method or path is not handled by the service.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The service could not publish the payment start message to Zeebe.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/test/payments": {
+      "post": {
+        "operationId": "submitTestPayment",
+        "summary": "Submit a payment with per-instance test behavior",
+        "description": "Test-only endpoint for selecting a FraudCheck result and simulated worker failures for one payment instance. The test settings are passed to workers as test-prefixed process variables. Manual review decisions still require completing the user task through its externally managed form. Request bodies are limited to 16 KiB.",
+        "tags": ["Payment Tests"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentTestRequest"
+              },
+              "example": {
+                "payment_id": "test-001",
+                "payer_id": "payer-001",
+                "payee_id": "payee-001",
+                "currency": "RUB",
+                "amount": 100,
+                "test": {
+                  "fraud_result": "denied",
+                  "failure_at": "refund",
+                  "transient_refund_failures": 0,
+                  "transient_rollback_failures": 0
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The Zeebe message publication call succeeded. This does not confirm that a process instance was created or report the payment outcome.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentAcceptedResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is invalid JSON, exceeds 16 KiB, or contains invalid payment or test fields.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested method or path is not handled by the service.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The service could not publish the payment start message to Zeebe.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "PaymentInitiationRequest": {
+        "title": "[Payment Orchestrator] PaymentInitiationRequest",
+        "x-display-name": "[Payment Orchestrator] PaymentInitiationRequest",
+        "type": "object",
+        "description": "Payment variables required by the PaymentInitiatedFact BPMN start message.",
+        "required": ["payment_id", "payer_id", "payee_id", "currency", "amount"],
+        "properties": {
+          "payment_id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S",
+            "description": "Payment identifier passed to the process variables and used as the Zeebe message ID. The value is trimmed before publication."
+          },
+          "payer_id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S",
+            "description": "Payer identifier. The value is trimmed before publication."
+          },
+          "payee_id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S",
+            "description": "Payee identifier. The value is trimmed before publication."
+          },
+          "currency": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S",
+            "description": "Payment currency code. The value is trimmed before publication."
+          },
+          "amount": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Positive payment amount."
+          }
+        }
+      },
+      "PaymentTestRequest": {
+        "title": "[Payment Orchestrator] PaymentTestRequest",
+        "x-display-name": "[Payment Orchestrator] PaymentTestRequest",
+        "description": "Payment initiation fields plus test behavior for one process instance.",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PaymentInitiationRequest"
+          },
+          {
+            "type": "object",
+            "required": ["test"],
+            "properties": {
+              "test": {
+                "$ref": "#/components/schemas/PaymentTestSettings"
+              }
+            }
+          }
+        ]
+      },
+      "PaymentTestSettings": {
+        "title": "[Payment Orchestrator] PaymentTestSettings",
+        "x-display-name": "[Payment Orchestrator] PaymentTestSettings",
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Per-instance worker behavior. Omitted settings default to approved, no failure, and zero transient failures.",
+        "properties": {
+          "fraud_result": {
+            "type": "string",
+            "enum": ["approved", "denied", "suspicious", "manual_review_required"],
+            "default": "approved",
+            "description": "Result returned by PERFORM_FRAUD_CHECK."
+          },
+          "failure_at": {
+            "type": "string",
+            "enum": ["none", "fraud_check", "external_checks", "debit", "transfer", "refund", "rollback"],
+            "default": "none",
+            "description": "Task at which to simulate a permanent failure. Refund and rollback failures take effect only if the process reaches those tasks."
+          },
+          "transient_refund_failures": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "Number of transient REFUND_PAYER failures before it succeeds."
+          },
+          "transient_rollback_failures": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "Number of transient ROLLBACK_PAYMENT_STATUS failures before it succeeds."
+          }
+        }
+      },
+      "PaymentAcceptedResponse": {
+        "title": "[Payment Orchestrator] PaymentAcceptedResponse",
+        "x-display-name": "[Payment Orchestrator] PaymentAcceptedResponse",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["payment_id", "status"],
+        "properties": {
+          "payment_id": {
+            "type": "string",
+            "description": "Trimmed payment identifier from the accepted request."
+          },
+          "status": {
+            "type": "string",
+            "const": "accepted",
+            "description": "Indicates that the orchestrator completed the Zeebe message publication call."
+          }
+        }
+      },
+      "ErrorResponse": {
+        "title": "[Payment Orchestrator] ErrorResponse",
+        "x-display-name": "[Payment Orchestrator] ErrorResponse",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Human-readable error summary."
+          }
+        }
+      }
+    }
+  }
+}

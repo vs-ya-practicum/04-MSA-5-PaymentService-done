@@ -6,3 +6,4 @@
 2. [Задание 2: Переходы состояний](Task2/state-transitions.ru.md)
 3. [Задание 3: ADR](Task3/adr.md)
 4. [Задание 4.1: Процесс обработки платежа](Task4-1/readme.md)
+5. [Задание 4.2: Реализация процесса Camunda](Task4-2/README.md)

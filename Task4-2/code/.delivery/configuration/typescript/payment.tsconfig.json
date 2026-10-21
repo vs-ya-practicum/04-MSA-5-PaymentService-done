@@ -1,0 +1,15 @@
+{
+  "extends": "../../../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "../../../services",
+    "outDir": "../../.builds/dist/payment",
+    "tsBuildInfoFile": "../../.temp/payment.tsbuildinfo",
+    "paths": {
+      "@task4-2/shared": ["../../../services/shared/src/index.ts"]
+    }
+  },
+  "include": [
+    "../../../services/payment/src/**/*.ts",
+    "../../../services/shared/src/**/*.ts"
+  ]
+}

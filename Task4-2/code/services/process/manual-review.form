@@ -1,0 +1,42 @@
+{
+  "components": [
+    {
+      "text": "# Решение по ручной проверке",
+      "label": "Инструкция",
+      "type": "text",
+      "layout": {
+        "row": "Row_manual_review_title",
+        "columns": null
+      },
+      "id": "Field_manual_review_title"
+    },
+    {
+      "values": [
+        {
+          "label": "Одобрить",
+          "value": "approved"
+        },
+        {
+          "label": "Отклонить",
+          "value": "denied"
+        }
+      ],
+      "label": "Решение",
+      "type": "radio",
+      "layout": {
+        "row": "Row_manual_decision",
+        "columns": null
+      },
+      "id": "Field_manual_decision",
+      "key": "manual_decision",
+      "validate": {
+        "required": true
+      }
+    }
+  ],
+  "type": "default",
+  "id": "manual_review_form",
+  "executionPlatform": "Camunda Cloud",
+  "executionPlatformVersion": "8.5.0",
+  "schemaVersion": 16
+}

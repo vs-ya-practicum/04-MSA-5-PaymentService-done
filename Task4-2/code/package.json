@@ -1,0 +1,24 @@
+{
+    "name": "task4-2",
+    "private": true,
+    "type": "module",
+    "workspaces": [
+        "services/*"
+    ],
+    "scripts": {
+        "build": "tsc -b",
+        "check-types": "tsx .delivery/scripts/check-types.ts",
+        "smoke-test:orchestrator": "tsx .delivery/scripts/smoke-test-orchestrator.ts",
+        "test:payment-scenarios": "tsx tests/run-payment-scenarios.ts",
+        "lint": "eslint ."
+    },
+    "devDependencies": {
+        "@eslint/js": "^10.0.1",
+        "@types/node": "^26.6.5",
+        "eslint": "^10.13.0",
+        "jiti": "^2.7.0",
+        "tsx": "^4.23.15",
+        "typescript": "^6.0.3",
+        "typescript-eslint": "^8.72.0"
+    }
+}

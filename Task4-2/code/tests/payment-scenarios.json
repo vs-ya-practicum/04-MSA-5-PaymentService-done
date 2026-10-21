@@ -1,0 +1,202 @@
+{
+  "approved": {
+    "payment": {
+      "payer_id": "payer-test-001",
+      "payee_id": "payee-test-001",
+      "currency": "RUB",
+      "amount": 100
+    },
+    "test": {
+      "fraud_result": "approved",
+      "failure_at": "none"
+    },
+    "checks": "The normal approved path: both external checks pass, the transfer completes, and the payer receives the completion notification.",
+    "inspect_for": "payment_outcome=completed, a successful TRANSFER_FUNDS_TO_PAYEE, the completion notification, and PAYMENT_COMPLETED."
+  },
+  "denied": {
+    "payment": {
+      "payer_id": "payer-test-001",
+      "payee_id": "payee-test-001",
+      "currency": "RUB",
+      "amount": 100
+    },
+    "test": {
+      "fraud_result": "denied",
+      "failure_at": "none"
+    },
+    "checks": "A denied fraud result starts automatic compensation.",
+    "inspect_for": "refund_reason=denied, successful REFUND_PAYER and ROLLBACK_PAYMENT_STATUS, payment_outcome=refunded, and PAYMENT_REFUNDED."
+  },
+  "suspicious": {
+    "payment": {
+      "payer_id": "payer-test-001",
+      "payee_id": "payee-test-001",
+      "currency": "RUB",
+      "amount": 100
+    },
+    "test": {
+      "fraud_result": "suspicious",
+      "failure_at": "none"
+    },
+    "checks": "A suspicious fraud result triggers the security notification and automatic compensation.",
+    "inspect_for": "refund_reason=suspicious, security notification, successful refund and rollback, payment_outcome=refunded, and PAYMENT_REFUNDED."
+  },
+  "manual-review-required": {
+    "payment": {
+      "payer_id": "payer-test-001",
+      "payee_id": "payee-test-001",
+      "currency": "RUB",
+      "amount": 100
+    },
+    "test": {
+      "fraud_result": "manual_review_required",
+      "failure_at": "none"
+    },
+    "checks": "The process activates the manual-review user task and makes its form available in Tasklist.",
+    "inspect_for": "The active manual-review task and its approved/denied form choices; payment_outcome is not set before a decision."
+  },
+  "manual-review-approved": {
+    "payment": {
+      "payer_id": "payer-test-001",
+      "payee_id": "payee-test-001",
+      "currency": "RUB",
+      "amount": 100
+    },
+    "test": {
+      "fraud_result": "manual_review_required",
+      "failure_at": "none"
+    },
+    "manual_decision": "approved",
+    "checks": "An approved manual-review decision continues to the payee transfer.",
+    "inspect_for": "manual_decision=approved, successful transfer and completion notification, payment_outcome=completed, and PAYMENT_COMPLETED."
+  },
+  "manual-review-denied": {
+    "payment": {
+      "payer_id": "payer-test-001",
+      "payee_id": "payee-test-001",
+      "currency": "RUB",
+      "amount": 100
+    },
+    "test": {
+      "fraud_result": "manual_review_required",
+      "failure_at": "none"
+    },
+    "manual_decision": "denied",
+    "checks": "A denied manual-review decision starts automatic compensation.",
+    "inspect_for": "manual_decision=denied, refund_reason=manual_denied, successful refund and rollback, payment_outcome=refunded, and PAYMENT_REFUNDED."
+  },
+  "fraud-check-failure": {
+    "payment": {
+      "payer_id": "payer-test-001",
+      "payee_id": "payee-test-001",
+      "currency": "RUB",
+      "amount": 100
+    },
+    "test": {
+      "fraud_result": "approved",
+      "failure_at": "fraud_check"
+    },
+    "checks": "A failure in PERFORM_FRAUD_CHECK throws CHECK_FAILED and takes the process through compensation.",
+    "inspect_for": "CHECK_FAILED handling, refund_reason=check_failed, successful refund and rollback, payment_outcome=refunded, and PAYMENT_REFUNDED."
+  },
+  "external-check-failure": {
+    "payment": {
+      "payer_id": "payer-test-001",
+      "payee_id": "payee-test-001",
+      "currency": "RUB",
+      "amount": 100
+    },
+    "test": {
+      "fraud_result": "approved",
+      "failure_at": "external_checks"
+    },
+    "checks": "A failed simulated external check throws CHECK_FAILED and takes the process through compensation.",
+    "inspect_for": "The failed compliance check, CHECK_FAILED handling, refund_reason=check_failed, successful refund and rollback, and PAYMENT_REFUNDED."
+  },
+  "debit-failure": {
+    "payment": {
+      "payer_id": "payer-test-001",
+      "payee_id": "payee-test-001",
+      "currency": "RUB",
+      "amount": 100
+    },
+    "test": {
+      "fraud_result": "approved",
+      "failure_at": "debit"
+    },
+    "checks": "A debit failure means payer funds were not captured, so compensation must not run.",
+    "inspect_for": "payment_outcome=failed_system and PAYMENT_FAILED_SYSTEM; no REFUND_PAYER or ROLLBACK_PAYMENT_STATUS."
+  },
+  "transfer-failure": {
+    "payment": {
+      "payer_id": "payer-test-001",
+      "payee_id": "payee-test-001",
+      "currency": "RUB",
+      "amount": 100
+    },
+    "test": {
+      "fraud_result": "approved",
+      "failure_at": "transfer"
+    },
+    "checks": "A known transfer failure triggers compensation because the payee transfer did not take effect.",
+    "inspect_for": "TRANSFER_FAILED, refund_reason=transfer_failed, successful refund and rollback, payment_outcome=refunded, and PAYMENT_REFUNDED."
+  },
+  "refund-failure": {
+    "payment": {
+      "payer_id": "payer-test-001",
+      "payee_id": "payee-test-001",
+      "currency": "RUB",
+      "amount": 100
+    },
+    "test": {
+      "fraud_result": "denied",
+      "failure_at": "refund"
+    },
+    "checks": "A permanent refund failure must block compensation and leave the process incident at the refund task.",
+    "inspect_for": "An incident at REFUND_PAYER; no rollback and no payment_outcome=refunded."
+  },
+  "rollback-failure": {
+    "payment": {
+      "payer_id": "payer-test-001",
+      "payee_id": "payee-test-001",
+      "currency": "RUB",
+      "amount": 100
+    },
+    "test": {
+      "fraud_result": "denied",
+      "failure_at": "rollback"
+    },
+    "checks": "A permanent rollback failure must block the refunded outcome after the refund succeeds.",
+    "inspect_for": "Successful REFUND_PAYER followed by an incident at ROLLBACK_PAYMENT_STATUS; no payment_outcome=refunded."
+  },
+  "refund-transient-retry": {
+    "payment": {
+      "payer_id": "payer-test-001",
+      "payee_id": "payee-test-001",
+      "currency": "RUB",
+      "amount": 100
+    },
+    "test": {
+      "fraud_result": "denied",
+      "failure_at": "none",
+      "transient_refund_failures": 1
+    },
+    "checks": "A transient refund failure is retried once and then succeeds.",
+    "inspect_for": "One failed REFUND_PAYER attempt followed by success, successful rollback, payment_outcome=refunded, and PAYMENT_REFUNDED."
+  },
+  "rollback-transient-retry": {
+    "payment": {
+      "payer_id": "payer-test-001",
+      "payee_id": "payee-test-001",
+      "currency": "RUB",
+      "amount": 100
+    },
+    "test": {
+      "fraud_result": "denied",
+      "failure_at": "none",
+      "transient_rollback_failures": 1
+    },
+    "checks": "A transient rollback failure is retried once and then succeeds.",
+    "inspect_for": "Successful refund, one failed ROLLBACK_PAYMENT_STATUS attempt followed by success, payment_outcome=refunded, and PAYMENT_REFUNDED."
+  }
+}

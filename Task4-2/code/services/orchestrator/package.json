@@ -1,0 +1,14 @@
+{
+  "name": "orchestrator",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b ../../.delivery/configuration/typescript/orchestrator.tsconfig.json",
+    "docker:build": "docker build --build-arg SERVICE=orchestrator -f ../../.delivery/configuration/docker/Dockerfile ../..",
+    "start": "node ../../.delivery/.builds/dist/orchestrator/orchestrator/src/index.js"
+  },
+  "dependencies": {
+    "@camunda8/sdk": "^8.5.0",
+    "@task4-2/shared": "1.0.0"
+  }
+}

@@ -1,0 +1,19 @@
+services:
+  payment-orchestrator:
+    build:
+      context: .
+      dockerfile: .delivery/configuration/docker/Dockerfile
+      args:
+        SERVICE: orchestrator
+    environment:
+      ZEEBE_GRPC_ADDRESS: grpc://zeebe:26500
+      CAMUNDA_AUTH_STRATEGY: NONE
+    networks:
+      - camunda-platform
+    depends_on:
+      zeebe:
+        condition: service_healthy
+      process:
+        condition: service_completed_successfully
+    ports:
+      - '3000:3000'

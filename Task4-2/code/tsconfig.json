@@ -1,0 +1,32 @@
+{
+    "compilerOptions": {
+        "target": "ES2022",
+        "module": "NodeNext",
+        "moduleResolution": "NodeNext",
+        "strict": true,
+        "composite": true,
+        "types": ["node"]
+    },
+    "files": [],
+    "include": ["eslint.config.ts", "./.delivery/scripts"],
+    "references": [
+        {
+            "path": "./.delivery/configuration/typescript/shared.tsconfig.json"
+        },
+        {
+            "path": "./.delivery/configuration/typescript/fraudcheck.tsconfig.json"
+        },
+        {
+            "path": "./.delivery/configuration/typescript/notification.tsconfig.json"
+        },
+        {
+            "path": "./.delivery/configuration/typescript/orchestrator.tsconfig.json"
+        },
+        {
+            "path": "./.delivery/configuration/typescript/payment.tsconfig.json"
+        },
+        {
+            "path": "./.delivery/configuration/typescript/process.tsconfig.json"
+        }
+    ]
+}

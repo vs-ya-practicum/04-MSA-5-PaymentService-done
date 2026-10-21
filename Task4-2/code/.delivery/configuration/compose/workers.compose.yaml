@@ -1,0 +1,41 @@
+x-service-build: &service-build
+  context: .
+  dockerfile: .delivery/configuration/docker/Dockerfile
+
+x-camunda-environment: &camunda-environment
+  ZEEBE_GRPC_ADDRESS: grpc://zeebe:26500
+  CAMUNDA_AUTH_STRATEGY: NONE
+
+x-service: &service
+  environment: *camunda-environment
+  networks:
+    - camunda-platform
+  depends_on:
+    zeebe:
+      condition: service_healthy
+
+services:
+  payment-service:
+    <<: *service
+    build:
+      <<: *service-build
+      args:
+        SERVICE: payment
+    environment:
+      <<: *camunda-environment
+
+  fraudcheck-service:
+    <<: *service
+    build:
+      <<: *service-build
+      args:
+        SERVICE: fraudcheck
+    environment:
+      <<: *camunda-environment
+
+  notification-service:
+    <<: *service
+    build:
+      <<: *service-build
+      args:
+        SERVICE: notification

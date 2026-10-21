@@ -1,0 +1,686 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="payment_process_definitions" targetNamespace="urn:orchestrpay:payment">
+
+  <bpmn:message id="payment_initiated_message" name="PaymentInitiatedFact" />
+  <bpmn:error id="debit_failed_error" name="Ошибка списания" errorCode="DEBIT_FAILED" />
+  <bpmn:error id="check_failed_error" name="Ошибка проверки" errorCode="CHECK_FAILED" />
+  <bpmn:error id="transfer_failed_error" name="Ошибка перевода" errorCode="TRANSFER_FAILED" />
+  <bpmn:error id="payment_failed_system_error" name="PAYMENT_FAILED_SYSTEM" errorCode="PAYMENT_FAILED_SYSTEM" />
+
+  <bpmn:process id="payment_process" name="Процесс обработки платежа" isExecutable="true">
+    <bpmn:documentation><![CDATA[
+Start message: PaymentInitiatedFact.
+Required variables: payment_id, payer_id, payee_id, currency (strings), amount (positive number).
+Payment Service owns DEBIT_PAYER_FUNDS, TRANSFER_FUNDS_TO_PAYEE, REFUND_PAYER and ROLLBACK_PAYMENT_STATUS.
+FraudCheck Service owns PERFORM_FRAUD_CHECK and PERFORM_EXTERNAL_CHECKS.
+Notification Service owns NOTIFY_SECURITY_SYSTEM and SEND_PAYMENT_STATUS_NOTIFICATION.
+Workers read the payment variables inherited from the process instance.
+PERFORM_FRAUD_CHECK must return fraud_result: approved, denied, suspicious or manual_review_required.
+PERFORM_EXTERNAL_CHECKS completes only after all simulated external checks pass; a failed check throws CHECK_FAILED.
+Either check worker may throw CHECK_FAILED. The checks deadline is 30 seconds.
+Manual review returns manual_decision: approved or denied. Its deadline is 20 minutes from task activation.
+Both deadlines reject the payment and trigger refund and payment-status rollback.
+DEBIT_FAILED means no payer funds were captured; TRANSFER_FAILED means the payee transfer did not take effect.
+Do not throw TRANSFER_FAILED for an unknown transfer outcome or an already completed transfer.
+Refund, rollback and notification workers must be idempotent and retry transient failures.
+Compensation failures must not complete the refund task or advance to a refunded outcome.
+The BPMN mappings own refund_reason and payment_outcome; workers must not overwrite them.
+refund_reason: denied, suspicious, manual_denied, check_cutoff, check_failed, transfer_failed or manual_review_cutoff; null when no refund is required.
+payment_outcome: completed after successful transfer, refunded after successful refund and payment-status rollback, or failed_system after a failed debit.
+SEND_PAYMENT_STATUS_NOTIFICATION reads payment_outcome to select the payer notification.
+      ]]></bpmn:documentation>
+
+    <bpmn:startEvent id="payment_initiated" name="Инициация платежа">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="camundaModeler:exampleOutputJson" value="{&#10;  &#34;payment_id&#34;: &#34;payment-001&#34;,&#10;  &#34;payer_id&#34;: &#34;payer-001&#34;,&#10;  &#34;payee_id&#34;: &#34;payee-001&#34;,&#10;  &#34;currency&#34;: &#34;RUB&#34;,&#10;  &#34;amount&#34;: 100&#10;}" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+      <bpmn:outgoing>payment_initiated_to_debit_payer</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="payment_initiated_message_definition" messageRef="payment_initiated_message" />
+    </bpmn:startEvent>
+
+    <bpmn:serviceTask id="debit_payer" name="DEBIT_PAYER_FUNDS Списать средства плательщика">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="DEBIT_PAYER_FUNDS" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>payment_initiated_to_debit_payer</bpmn:incoming>
+      <bpmn:outgoing>debit_payer_to_transaction_checks</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:boundaryEvent id="debit_failed" name="Ошибка списания" attachedToRef="debit_payer" cancelActivity="true">
+      <bpmn:outgoing>debit_failed_to_payment_failed</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="debit_failed_error_definition" errorRef="debit_failed_error" />
+    </bpmn:boundaryEvent>
+
+    <bpmn:subProcess id="transaction_checks" name="PERFORM_FRAUD_CHECK Выполнить проверки операции">
+      <bpmn:extensionElements>
+        <zeebe:ioMapping>
+          <zeebe:input source="=null" target="fraud_result" />
+          <zeebe:input source="=null" target="refund_reason" />
+          <zeebe:output source="=fraud_result" target="fraud_result" />
+          <zeebe:output source="=refund_reason" target="refund_reason" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>debit_payer_to_transaction_checks</bpmn:incoming>
+      <bpmn:outgoing>transaction_checks_to_fraud_outcome</bpmn:outgoing>
+
+      <bpmn:startEvent id="checks_started" name="Начало проверок">
+        <bpmn:outgoing>checks_started_to_checks_fork</bpmn:outgoing>
+      </bpmn:startEvent>
+
+      <bpmn:parallelGateway id="checks_fork" gatewayDirection="Diverging">
+        <bpmn:incoming>checks_started_to_checks_fork</bpmn:incoming>
+        <bpmn:outgoing>checks_fork_to_fraud_check</bpmn:outgoing>
+        <bpmn:outgoing>checks_fork_to_external_checks</bpmn:outgoing>
+      </bpmn:parallelGateway>
+
+      <bpmn:serviceTask id="fraud_check" name="Выполнить антифрод-проверку">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="PERFORM_FRAUD_CHECK" />
+          <zeebe:ioMapping>
+            <zeebe:output source="=fraud_result" target="fraud_result" />
+            <zeebe:output source="=if fraud_result = &quot;suspicious&quot; then &quot;suspicious&quot; else if fraud_result = &quot;denied&quot; then &quot;denied&quot; else null" target="refund_reason" />
+          </zeebe:ioMapping>
+        </bpmn:extensionElements>
+        <bpmn:incoming>checks_fork_to_fraud_check</bpmn:incoming>
+        <bpmn:outgoing>fraud_check_to_checks_join</bpmn:outgoing>
+      </bpmn:serviceTask>
+
+      <bpmn:serviceTask id="external_checks" name="Выполнить проверки соответствия требованиям и ограничений">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="PERFORM_EXTERNAL_CHECKS" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>checks_fork_to_external_checks</bpmn:incoming>
+        <bpmn:outgoing>external_checks_to_checks_join</bpmn:outgoing>
+      </bpmn:serviceTask>
+
+      <bpmn:parallelGateway id="checks_join" gatewayDirection="Converging">
+        <bpmn:incoming>fraud_check_to_checks_join</bpmn:incoming>
+        <bpmn:incoming>external_checks_to_checks_join</bpmn:incoming>
+        <bpmn:outgoing>checks_join_to_checks_completed</bpmn:outgoing>
+      </bpmn:parallelGateway>
+
+      <bpmn:endEvent id="checks_completed" name="Проверки завершены">
+        <bpmn:incoming>checks_join_to_checks_completed</bpmn:incoming>
+      </bpmn:endEvent>
+
+      <bpmn:sequenceFlow id="checks_started_to_checks_fork" sourceRef="checks_started" targetRef="checks_fork" />
+      <bpmn:sequenceFlow id="checks_fork_to_fraud_check" sourceRef="checks_fork" targetRef="fraud_check" />
+      <bpmn:sequenceFlow id="checks_fork_to_external_checks" sourceRef="checks_fork" targetRef="external_checks" />
+      <bpmn:sequenceFlow id="fraud_check_to_checks_join" sourceRef="fraud_check" targetRef="checks_join" />
+      <bpmn:sequenceFlow id="external_checks_to_checks_join" sourceRef="external_checks" targetRef="checks_join" />
+      <bpmn:sequenceFlow id="checks_join_to_checks_completed" sourceRef="checks_join" targetRef="checks_completed" />
+
+    </bpmn:subProcess>
+
+    <bpmn:boundaryEvent id="check_cutoff" name="Контрольный срок проверки: 30 секунд" attachedToRef="transaction_checks" cancelActivity="true">
+      <bpmn:extensionElements>
+        <zeebe:ioMapping>
+          <zeebe:output source="=&quot;check_cutoff&quot;" target="refund_reason" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:outgoing>check_cutoff_to_refund_payer</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="check_cutoff_timer_definition">
+        <bpmn:timeDuration>PT30S</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+
+    <bpmn:boundaryEvent id="check_failed" name="Ошибка проверки" attachedToRef="transaction_checks" cancelActivity="true">
+      <bpmn:extensionElements>
+        <zeebe:ioMapping>
+          <zeebe:output source="=&quot;check_failed&quot;" target="refund_reason" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:outgoing>check_failed_to_refund_payer</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="check_failed_error_definition" errorRef="check_failed_error" />
+    </bpmn:boundaryEvent>
+
+    <bpmn:exclusiveGateway id="fraud_outcome" name="Результат FraudCheck?" gatewayDirection="Diverging">
+      <bpmn:incoming>transaction_checks_to_fraud_outcome</bpmn:incoming>
+      <bpmn:outgoing>fraud_outcome_to_transfer_to_payee</bpmn:outgoing>
+      <bpmn:outgoing>fraud_outcome_to_refund_payer</bpmn:outgoing>
+      <bpmn:outgoing>fraud_outcome_to_suspicious_fork</bpmn:outgoing>
+      <bpmn:outgoing>fraud_outcome_to_manual_review</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:userTask id="manual_review" name="Ручная проверка оператором">
+      <bpmn:extensionElements>
+        <zeebe:formDefinition formId="manual_review_form" bindingType="deployment" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=null" target="manual_decision" />
+          <zeebe:output source="=manual_decision" target="manual_decision" />
+          <zeebe:output source="=if manual_decision = &quot;denied&quot; then &quot;manual_denied&quot; else null" target="refund_reason" />
+        </zeebe:ioMapping>
+        <zeebe:userTask />
+      </bpmn:extensionElements>
+      <bpmn:incoming>fraud_outcome_to_manual_review</bpmn:incoming>
+      <bpmn:outgoing>manual_review_to_manual_outcome</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:boundaryEvent id="manual_review_cutoff" name="20 минут" attachedToRef="manual_review" cancelActivity="true">
+      <bpmn:extensionElements>
+        <zeebe:ioMapping>
+          <zeebe:output source="=&quot;manual_review_cutoff&quot;" target="refund_reason" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:outgoing>manual_review_cutoff_to_refund_payer</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="manual_review_cutoff_timer_definition">
+        <bpmn:timeDuration>PT20M</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+
+    <bpmn:exclusiveGateway id="manual_outcome" name="Платёж одобрен?" gatewayDirection="Diverging">
+      <bpmn:incoming>manual_review_to_manual_outcome</bpmn:incoming>
+      <bpmn:outgoing>manual_outcome_to_transfer_to_payee</bpmn:outgoing>
+      <bpmn:outgoing>manual_outcome_to_refund_payer</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:exclusiveGateway id="transfer_to_payee_merge" gatewayDirection="Converging">
+      <bpmn:incoming>fraud_outcome_to_transfer_to_payee</bpmn:incoming>
+      <bpmn:incoming>manual_outcome_to_transfer_to_payee</bpmn:incoming>
+      <bpmn:outgoing>transfer_to_payee_merge_to_task</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:serviceTask id="transfer_to_payee" name="TRANSFER_FUNDS_TO_PAYEE Перевести средства получателю">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="TRANSFER_FUNDS_TO_PAYEE" />
+        <zeebe:ioMapping>
+          <zeebe:output source="=&quot;completed&quot;" target="payment_outcome" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>transfer_to_payee_merge_to_task</bpmn:incoming>
+      <bpmn:outgoing>transfer_to_payee_to_payment_result</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:boundaryEvent id="transfer_failed" name="Ошибка перевода" attachedToRef="transfer_to_payee" cancelActivity="true">
+      <bpmn:extensionElements>
+        <zeebe:ioMapping>
+          <zeebe:output source="=&quot;transfer_failed&quot;" target="refund_reason" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:outgoing>transfer_failed_to_refund_payer</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="transfer_failed_error_definition" errorRef="transfer_failed_error" />
+    </bpmn:boundaryEvent>
+
+    <bpmn:parallelGateway id="suspicious_fork" gatewayDirection="Diverging">
+      <bpmn:incoming>fraud_outcome_to_suspicious_fork</bpmn:incoming>
+      <bpmn:outgoing>suspicious_fork_to_refund_payer</bpmn:outgoing>
+      <bpmn:outgoing>suspicious_fork_to_notify_security</bpmn:outgoing>
+    </bpmn:parallelGateway>
+
+    <bpmn:sendTask id="notify_security" name="NOTIFY_SECURITY_SYSTEM Уведомить Security System">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="NOTIFY_SECURITY_SYSTEM" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>suspicious_fork_to_notify_security</bpmn:incoming>
+      <bpmn:outgoing>notify_security_to_suspicious_join</bpmn:outgoing>
+    </bpmn:sendTask>
+
+    <bpmn:exclusiveGateway id="refund_payer_merge" gatewayDirection="Converging">
+      <bpmn:incoming>check_cutoff_to_refund_payer</bpmn:incoming>
+      <bpmn:incoming>check_failed_to_refund_payer</bpmn:incoming>
+      <bpmn:incoming>transfer_failed_to_refund_payer</bpmn:incoming>
+      <bpmn:incoming>fraud_outcome_to_refund_payer</bpmn:incoming>
+      <bpmn:incoming>suspicious_fork_to_refund_payer</bpmn:incoming>
+      <bpmn:incoming>manual_review_cutoff_to_refund_payer</bpmn:incoming>
+      <bpmn:incoming>manual_outcome_to_refund_payer</bpmn:incoming>
+      <bpmn:outgoing>refund_payer_merge_to_task</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:serviceTask id="refund_payer" name="REFUND_PAYER Автоматически вернуть средства плательщику">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="REFUND_PAYER" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>refund_payer_merge_to_task</bpmn:incoming>
+      <bpmn:outgoing>refund_payer_to_rollback_payment_status</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:serviceTask id="rollback_payment_status" name="ROLLBACK_PAYMENT_STATUS Восстановить статус платежа">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="ROLLBACK_PAYMENT_STATUS" />
+        <zeebe:ioMapping>
+          <zeebe:output source="=&quot;refunded&quot;" target="payment_outcome" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>refund_payer_to_rollback_payment_status</bpmn:incoming>
+      <bpmn:outgoing>rollback_payment_status_to_refund_result</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:exclusiveGateway id="refund_result" name="Причина возврата?" gatewayDirection="Diverging">
+      <bpmn:incoming>rollback_payment_status_to_refund_result</bpmn:incoming>
+      <bpmn:outgoing>refund_result_to_suspicious_join</bpmn:outgoing>
+      <bpmn:outgoing>refund_result_to_payment_result</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:parallelGateway id="suspicious_join" gatewayDirection="Converging">
+      <bpmn:incoming>notify_security_to_suspicious_join</bpmn:incoming>
+      <bpmn:incoming>refund_result_to_suspicious_join</bpmn:incoming>
+      <bpmn:outgoing>suspicious_join_to_payment_result</bpmn:outgoing>
+    </bpmn:parallelGateway>
+
+    <bpmn:exclusiveGateway id="payment_result_merge" gatewayDirection="Converging">
+      <bpmn:incoming>transfer_to_payee_to_payment_result</bpmn:incoming>
+      <bpmn:incoming>suspicious_join_to_payment_result</bpmn:incoming>
+      <bpmn:incoming>refund_result_to_payment_result</bpmn:incoming>
+      <bpmn:outgoing>payment_result_merge_to_decision</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:exclusiveGateway id="payment_result" name="Результат платежа?" gatewayDirection="Diverging">
+      <bpmn:incoming>payment_result_merge_to_decision</bpmn:incoming>
+      <bpmn:outgoing>payment_result_to_notify_completed</bpmn:outgoing>
+      <bpmn:outgoing>payment_result_to_notify_refunded</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:sendTask id="notify_completed" name="SEND_PAYMENT_STATUS_NOTIFICATION Уведомить о завершении платежа">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="SEND_PAYMENT_STATUS_NOTIFICATION" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>payment_result_to_notify_completed</bpmn:incoming>
+      <bpmn:outgoing>notify_completed_to_payment_completed</bpmn:outgoing>
+    </bpmn:sendTask>
+
+    <bpmn:sendTask id="notify_refunded" name="SEND_PAYMENT_STATUS_NOTIFICATION Уведомить о возврате средств">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="SEND_PAYMENT_STATUS_NOTIFICATION" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>payment_result_to_notify_refunded</bpmn:incoming>
+      <bpmn:outgoing>notify_refunded_to_payment_refunded</bpmn:outgoing>
+    </bpmn:sendTask>
+
+    <bpmn:endEvent id="payment_completed" name="PAYMENT_COMPLETED">
+      <bpmn:incoming>notify_completed_to_payment_completed</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:endEvent id="payment_refunded" name="PAYMENT_REFUNDED">
+      <bpmn:incoming>notify_refunded_to_payment_refunded</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:endEvent id="payment_failed" name="PAYMENT_FAILED_SYSTEM">
+      <bpmn:incoming>debit_failed_to_payment_failed</bpmn:incoming>
+      <bpmn:errorEventDefinition id="payment_failed_system_error_definition" errorRef="payment_failed_system_error" />
+    </bpmn:endEvent>
+
+    <bpmn:subProcess id="payment_failure_handler" name="Завершить платёж после ошибки списания" triggeredByEvent="true">
+      <bpmn:extensionElements>
+        <zeebe:ioMapping>
+          <zeebe:output source="=&quot;failed_system&quot;" target="payment_outcome" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:startEvent id="payment_failure_caught" name="Ошибка платёжной операции" isInterrupting="true">
+        <bpmn:outgoing>payment_failure_caught_to_payment_failure_handled</bpmn:outgoing>
+        <bpmn:errorEventDefinition id="payment_failure_caught_error_definition" errorRef="payment_failed_system_error" />
+      </bpmn:startEvent>
+      <bpmn:endEvent id="payment_failure_handled" name="Платёж завершён с ошибкой">
+        <bpmn:incoming>payment_failure_caught_to_payment_failure_handled</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:sequenceFlow id="payment_failure_caught_to_payment_failure_handled" sourceRef="payment_failure_caught" targetRef="payment_failure_handled" />
+    </bpmn:subProcess>
+
+    <bpmn:sequenceFlow id="payment_initiated_to_debit_payer" sourceRef="payment_initiated" targetRef="debit_payer" />
+    <bpmn:sequenceFlow id="debit_failed_to_payment_failed" sourceRef="debit_failed" targetRef="payment_failed" />
+    <bpmn:sequenceFlow id="debit_payer_to_transaction_checks" sourceRef="debit_payer" targetRef="transaction_checks" />
+    <bpmn:sequenceFlow id="transaction_checks_to_fraud_outcome" sourceRef="transaction_checks" targetRef="fraud_outcome" />
+    <bpmn:sequenceFlow id="fraud_outcome_to_transfer_to_payee" name="одобрено" sourceRef="fraud_outcome" targetRef="transfer_to_payee_merge">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= fraud_result = "approved"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="transfer_to_payee_merge_to_task" sourceRef="transfer_to_payee_merge" targetRef="transfer_to_payee" />
+    <bpmn:sequenceFlow id="check_cutoff_to_refund_payer" sourceRef="check_cutoff" targetRef="refund_payer_merge" />
+    <bpmn:sequenceFlow id="check_failed_to_refund_payer" sourceRef="check_failed" targetRef="refund_payer_merge" />
+    <bpmn:sequenceFlow id="transfer_failed_to_refund_payer" sourceRef="transfer_failed" targetRef="refund_payer_merge" />
+    <bpmn:sequenceFlow id="fraud_outcome_to_refund_payer" name="отклонено" sourceRef="fraud_outcome" targetRef="refund_payer_merge">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= fraud_result = "denied"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="refund_payer_to_rollback_payment_status" sourceRef="refund_payer" targetRef="rollback_payment_status" />
+    <bpmn:sequenceFlow id="rollback_payment_status_to_refund_result" sourceRef="rollback_payment_status" targetRef="refund_result" />
+    <bpmn:sequenceFlow id="fraud_outcome_to_suspicious_fork" name="подозрительная операция" sourceRef="fraud_outcome" targetRef="suspicious_fork">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= fraud_result = "suspicious"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="suspicious_fork_to_refund_payer" sourceRef="suspicious_fork" targetRef="refund_payer_merge" />
+    <bpmn:sequenceFlow id="suspicious_fork_to_notify_security" sourceRef="suspicious_fork" targetRef="notify_security" />
+    <bpmn:sequenceFlow id="notify_security_to_suspicious_join" sourceRef="notify_security" targetRef="suspicious_join" />
+    <bpmn:sequenceFlow id="refund_result_to_suspicious_join" name="подозрительная операция" sourceRef="refund_result" targetRef="suspicious_join">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= refund_reason = "suspicious"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="transfer_to_payee_to_payment_result" sourceRef="transfer_to_payee" targetRef="payment_result_merge" />
+    <bpmn:sequenceFlow id="suspicious_join_to_payment_result" sourceRef="suspicious_join" targetRef="payment_result_merge" />
+    <bpmn:sequenceFlow id="refund_result_to_payment_result" name="отклонён или завершился ошибкой" sourceRef="refund_result" targetRef="payment_result_merge">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= refund_reason != "suspicious"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="payment_result_to_notify_completed" name="завершён" sourceRef="payment_result" targetRef="notify_completed">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= payment_outcome = "completed"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="payment_result_to_notify_refunded" name="средства возвращены" sourceRef="payment_result" targetRef="notify_refunded">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= payment_outcome = "refunded"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="notify_completed_to_payment_completed" sourceRef="notify_completed" targetRef="payment_completed" />
+    <bpmn:sequenceFlow id="notify_refunded_to_payment_refunded" sourceRef="notify_refunded" targetRef="payment_refunded" />
+    <bpmn:sequenceFlow id="fraud_outcome_to_manual_review" name="требуется ручная проверка" sourceRef="fraud_outcome" targetRef="manual_review">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= fraud_result = "manual_review_required"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="manual_review_cutoff_to_refund_payer" sourceRef="manual_review_cutoff" targetRef="refund_payer_merge" />
+    <bpmn:sequenceFlow id="manual_review_to_manual_outcome" sourceRef="manual_review" targetRef="manual_outcome" />
+    <bpmn:sequenceFlow id="manual_outcome_to_transfer_to_payee" name="одобрено" sourceRef="manual_outcome" targetRef="transfer_to_payee_merge">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= manual_decision = "approved"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="manual_outcome_to_refund_payer" name="отклонено" sourceRef="manual_outcome" targetRef="refund_payer_merge">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= manual_decision = "denied"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="refund_payer_merge_to_task" sourceRef="refund_payer_merge" targetRef="refund_payer" />
+    <bpmn:sequenceFlow id="payment_result_merge_to_decision" sourceRef="payment_result_merge" targetRef="payment_result" />
+
+  </bpmn:process>
+
+  <bpmndi:BPMNDiagram id="payment_process_diagram" name="Процесс обработки платежа">
+    <bpmndi:BPMNPlane id="payment_process_plane" bpmnElement="payment_process">
+      <bpmndi:BPMNShape id="payment_initiated_shape" bpmnElement="payment_initiated">
+        <dc:Bounds x="80" y="420" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="debit_payer_shape" bpmnElement="debit_payer">
+        <dc:Bounds x="190" y="398" width="210" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="debit_failed_shape" bpmnElement="debit_failed">
+        <dc:Bounds x="330" y="460" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="transaction_checks_shape" bpmnElement="transaction_checks" isExpanded="true">
+        <dc:Bounds x="470" y="250" width="900" height="420" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="checks_started_shape" bpmnElement="checks_started">
+        <dc:Bounds x="500" y="430" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="checks_fork_shape" bpmnElement="checks_fork">
+        <dc:Bounds x="565" y="423" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="fraud_check_shape" bpmnElement="fraud_check">
+        <dc:Bounds x="700" y="320" width="240" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="external_checks_shape" bpmnElement="external_checks">
+        <dc:Bounds x="700" y="515" width="240" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="checks_join_shape" bpmnElement="checks_join">
+        <dc:Bounds x="1120" y="423" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="checks_completed_shape" bpmnElement="checks_completed">
+        <dc:Bounds x="1250" y="430" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="check_cutoff_shape" bpmnElement="check_cutoff">
+        <dc:Bounds x="960" y="652" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="check_failed_shape" bpmnElement="check_failed">
+        <dc:Bounds x="1320" y="652" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="fraud_outcome_shape" bpmnElement="fraud_outcome">
+        <dc:Bounds x="1425" y="413" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="manual_review_shape" bpmnElement="manual_review">
+        <dc:Bounds x="1540" y="100" width="220" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="manual_review_cutoff_shape" bpmnElement="manual_review_cutoff">
+        <dc:Bounds x="1700" y="162" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="manual_outcome_shape" bpmnElement="manual_outcome">
+        <dc:Bounds x="1830" y="115" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="transfer_to_payee_merge_shape" bpmnElement="transfer_to_payee_merge">
+        <dc:Bounds x="1960" y="413" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="transfer_to_payee_shape" bpmnElement="transfer_to_payee">
+        <dc:Bounds x="2060" y="400" width="220" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="transfer_failed_shape" bpmnElement="transfer_failed">
+        <dc:Bounds x="2240" y="462" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="suspicious_fork_shape" bpmnElement="suspicious_fork">
+        <dc:Bounds x="1575" y="650" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="notify_security_shape" bpmnElement="notify_security">
+        <dc:Bounds x="1830" y="635" width="220" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="refund_payer_merge_shape" bpmnElement="refund_payer_merge">
+        <dc:Bounds x="1975" y="865" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="refund_payer_shape" bpmnElement="refund_payer">
+        <dc:Bounds x="2060" y="850" width="220" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="rollback_payment_status_shape" bpmnElement="rollback_payment_status">
+        <dc:Bounds x="2300" y="850" width="220" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="refund_result_shape" bpmnElement="refund_result">
+        <dc:Bounds x="2550" y="865" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="suspicious_join_shape" bpmnElement="suspicious_join">
+        <dc:Bounds x="2725" y="650" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="payment_result_merge_shape" bpmnElement="payment_result_merge">
+        <dc:Bounds x="2845" y="413" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="payment_result_shape" bpmnElement="payment_result">
+        <dc:Bounds x="2970" y="413" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="notify_completed_shape" bpmnElement="notify_completed">
+        <dc:Bounds x="3090" y="290" width="250" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="notify_refunded_shape" bpmnElement="notify_refunded">
+        <dc:Bounds x="3090" y="660" width="250" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="payment_completed_shape" bpmnElement="payment_completed">
+        <dc:Bounds x="3400" y="312" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="payment_refunded_shape" bpmnElement="payment_refunded">
+        <dc:Bounds x="3400" y="682" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="payment_failed_shape" bpmnElement="payment_failed">
+        <dc:Bounds x="330" y="1032" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="payment_failure_handler_shape" bpmnElement="payment_failure_handler" isExpanded="true">
+        <dc:Bounds x="80" y="1150" width="570" height="200" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="payment_failure_caught_shape" bpmnElement="payment_failure_caught">
+        <dc:Bounds x="125" y="1232" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="payment_failure_handled_shape" bpmnElement="payment_failure_handled">
+        <dc:Bounds x="500" y="1232" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="payment_initiated_to_debit_payer_edge" bpmnElement="payment_initiated_to_debit_payer">
+        <di:waypoint x="116" y="438" />
+        <di:waypoint x="190" y="438" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="debit_failed_to_payment_failed_edge" bpmnElement="debit_failed_to_payment_failed">
+        <di:waypoint x="348" y="496" />
+        <di:waypoint x="348" y="1032" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="debit_payer_to_transaction_checks_edge" bpmnElement="debit_payer_to_transaction_checks">
+        <di:waypoint x="400" y="438" />
+        <di:waypoint x="470" y="438" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="checks_started_to_checks_fork_edge" bpmnElement="checks_started_to_checks_fork">
+        <di:waypoint x="536" y="448" />
+        <di:waypoint x="565" y="448" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="checks_fork_to_fraud_check_edge" bpmnElement="checks_fork_to_fraud_check">
+        <di:waypoint x="590" y="423" />
+        <di:waypoint x="590" y="360" />
+        <di:waypoint x="700" y="360" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="checks_fork_to_external_checks_edge" bpmnElement="checks_fork_to_external_checks">
+        <di:waypoint x="590" y="473" />
+        <di:waypoint x="590" y="555" />
+        <di:waypoint x="700" y="555" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="fraud_check_to_checks_join_edge" bpmnElement="fraud_check_to_checks_join">
+        <di:waypoint x="940" y="360" />
+        <di:waypoint x="1145" y="360" />
+        <di:waypoint x="1145" y="423" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="external_checks_to_checks_join_edge" bpmnElement="external_checks_to_checks_join">
+        <di:waypoint x="940" y="555" />
+        <di:waypoint x="1145" y="555" />
+        <di:waypoint x="1145" y="473" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="checks_join_to_checks_completed_edge" bpmnElement="checks_join_to_checks_completed">
+        <di:waypoint x="1170" y="448" />
+        <di:waypoint x="1250" y="448" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="transaction_checks_to_fraud_outcome_edge" bpmnElement="transaction_checks_to_fraud_outcome">
+        <di:waypoint x="1370" y="438" />
+        <di:waypoint x="1425" y="438" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="fraud_outcome_to_transfer_to_payee_edge" bpmnElement="fraud_outcome_to_transfer_to_payee">
+        <di:waypoint x="1475" y="438" />
+        <di:waypoint x="1960" y="438" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="check_cutoff_to_refund_payer_edge" bpmnElement="check_cutoff_to_refund_payer">
+        <di:waypoint x="978" y="688" />
+        <di:waypoint x="978" y="960" />
+        <di:waypoint x="1900" y="960" />
+        <di:waypoint x="1900" y="890" />
+        <di:waypoint x="1975" y="890" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="check_failed_to_refund_payer_edge" bpmnElement="check_failed_to_refund_payer">
+        <di:waypoint x="1338" y="688" />
+        <di:waypoint x="1338" y="1000" />
+        <di:waypoint x="1900" y="1000" />
+        <di:waypoint x="1900" y="890" />
+        <di:waypoint x="1975" y="890" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="transfer_failed_to_refund_payer_edge" bpmnElement="transfer_failed_to_refund_payer">
+        <di:waypoint x="2258" y="498" />
+        <di:waypoint x="2295" y="498" />
+        <di:waypoint x="2295" y="780" />
+        <di:waypoint x="1940" y="780" />
+        <di:waypoint x="1940" y="890" />
+        <di:waypoint x="1975" y="890" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="fraud_outcome_to_refund_payer_edge" bpmnElement="fraud_outcome_to_refund_payer">
+        <di:waypoint x="1475" y="438" />
+        <di:waypoint x="1505" y="438" />
+        <di:waypoint x="1505" y="890" />
+        <di:waypoint x="1975" y="890" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="transfer_to_payee_merge_to_task_edge" bpmnElement="transfer_to_payee_merge_to_task">
+        <di:waypoint x="2010" y="438" />
+        <di:waypoint x="2060" y="438" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="refund_payer_merge_to_task_edge" bpmnElement="refund_payer_merge_to_task">
+        <di:waypoint x="2025" y="890" />
+        <di:waypoint x="2060" y="890" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="refund_payer_to_rollback_payment_status_edge" bpmnElement="refund_payer_to_rollback_payment_status">
+        <di:waypoint x="2280" y="890" />
+        <di:waypoint x="2300" y="890" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="rollback_payment_status_to_refund_result_edge" bpmnElement="rollback_payment_status_to_refund_result">
+        <di:waypoint x="2520" y="890" />
+        <di:waypoint x="2550" y="890" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="fraud_outcome_to_suspicious_fork_edge" bpmnElement="fraud_outcome_to_suspicious_fork">
+        <di:waypoint x="1450" y="463" />
+        <di:waypoint x="1450" y="675" />
+        <di:waypoint x="1575" y="675" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="suspicious_fork_to_refund_payer_edge" bpmnElement="suspicious_fork_to_refund_payer">
+        <di:waypoint x="1600" y="700" />
+        <di:waypoint x="1600" y="820" />
+        <di:waypoint x="1950" y="820" />
+        <di:waypoint x="1950" y="890" />
+        <di:waypoint x="1975" y="890" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="suspicious_fork_to_notify_security_edge" bpmnElement="suspicious_fork_to_notify_security">
+        <di:waypoint x="1625" y="675" />
+        <di:waypoint x="1830" y="675" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="notify_security_to_suspicious_join_edge" bpmnElement="notify_security_to_suspicious_join">
+        <di:waypoint x="2050" y="675" />
+        <di:waypoint x="2725" y="675" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="refund_result_to_suspicious_join_edge" bpmnElement="refund_result_to_suspicious_join">
+        <di:waypoint x="2575" y="865" />
+        <di:waypoint x="2575" y="755" />
+        <di:waypoint x="2750" y="755" />
+        <di:waypoint x="2750" y="700" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="transfer_to_payee_to_payment_result_edge" bpmnElement="transfer_to_payee_to_payment_result">
+        <di:waypoint x="2280" y="440" />
+        <di:waypoint x="2845" y="438" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="suspicious_join_to_payment_result_edge" bpmnElement="suspicious_join_to_payment_result">
+        <di:waypoint x="2775" y="675" />
+        <di:waypoint x="2810" y="675" />
+        <di:waypoint x="2810" y="438" />
+        <di:waypoint x="2845" y="438" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="refund_result_to_payment_result_edge" bpmnElement="refund_result_to_payment_result">
+        <di:waypoint x="2600" y="890" />
+        <di:waypoint x="2780" y="890" />
+        <di:waypoint x="2780" y="520" />
+        <di:waypoint x="2870" y="520" />
+        <di:waypoint x="2870" y="463" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="payment_result_merge_to_decision_edge" bpmnElement="payment_result_merge_to_decision">
+        <di:waypoint x="2895" y="438" />
+        <di:waypoint x="2970" y="438" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="payment_result_to_notify_completed_edge" bpmnElement="payment_result_to_notify_completed">
+        <di:waypoint x="2995" y="413" />
+        <di:waypoint x="2995" y="330" />
+        <di:waypoint x="3090" y="330" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="payment_result_to_notify_refunded_edge" bpmnElement="payment_result_to_notify_refunded">
+        <di:waypoint x="3020" y="438" />
+        <di:waypoint x="3050" y="438" />
+        <di:waypoint x="3050" y="700" />
+        <di:waypoint x="3090" y="700" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="notify_completed_to_payment_completed_edge" bpmnElement="notify_completed_to_payment_completed">
+        <di:waypoint x="3340" y="330" />
+        <di:waypoint x="3400" y="330" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="notify_refunded_to_payment_refunded_edge" bpmnElement="notify_refunded_to_payment_refunded">
+        <di:waypoint x="3340" y="700" />
+        <di:waypoint x="3400" y="700" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="fraud_outcome_to_manual_review_edge" bpmnElement="fraud_outcome_to_manual_review">
+        <di:waypoint x="1450" y="413" />
+        <di:waypoint x="1450" y="140" />
+        <di:waypoint x="1540" y="140" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="manual_review_cutoff_to_refund_payer_edge" bpmnElement="manual_review_cutoff_to_refund_payer">
+        <di:waypoint x="1718" y="198" />
+        <di:waypoint x="1718" y="230" />
+        <di:waypoint x="1980" y="230" />
+        <di:waypoint x="1980" y="780" />
+        <di:waypoint x="1980" y="890" />
+        <di:waypoint x="1975" y="890" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="manual_review_to_manual_outcome_edge" bpmnElement="manual_review_to_manual_outcome">
+        <di:waypoint x="1760" y="140" />
+        <di:waypoint x="1830" y="140" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="manual_outcome_to_transfer_to_payee_edge" bpmnElement="manual_outcome_to_transfer_to_payee">
+        <di:waypoint x="1880" y="140" />
+        <di:waypoint x="2170" y="140" />
+        <di:waypoint x="2170" y="375" />
+        <di:waypoint x="1985" y="375" />
+        <di:waypoint x="1985" y="413" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="manual_outcome_to_refund_payer_edge" bpmnElement="manual_outcome_to_refund_payer">
+        <di:waypoint x="1855" y="165" />
+        <di:waypoint x="1855" y="200" />
+        <di:waypoint x="1940" y="200" />
+        <di:waypoint x="1940" y="800" />
+        <di:waypoint x="1940" y="890" />
+        <di:waypoint x="1975" y="890" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="payment_failure_caught_to_payment_failure_handled_edge" bpmnElement="payment_failure_caught_to_payment_failure_handled">
+        <di:waypoint x="161" y="1250" />
+        <di:waypoint x="500" y="1250" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+
+</bpmn:definitions>

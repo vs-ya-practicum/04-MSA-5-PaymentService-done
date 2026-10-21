@@ -1,0 +1,15 @@
+{
+  "extends": "../../../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "../../../services",
+    "outDir": "../../.builds/dist/orchestrator",
+    "tsBuildInfoFile": "../../.temp/orchestrator.tsbuildinfo",
+    "paths": {
+      "@task4-2/shared": ["../../../services/shared/src/index.ts"]
+    }
+  },
+  "include": [
+    "../../../services/orchestrator/src/**/*.ts",
+    "../../../services/shared/src/**/*.ts"
+  ]
+}

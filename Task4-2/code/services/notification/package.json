@@ -1,0 +1,14 @@
+{
+  "name": "notification",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b ../../.delivery/configuration/typescript/notification.tsconfig.json",
+    "docker:build": "docker build --build-arg SERVICE=notification -f ../../.delivery/configuration/docker/Dockerfile ../..",
+    "start": "node ../../.delivery/.builds/dist/notification/notification/src/index.js"
+  },
+  "dependencies": {
+    "@camunda8/sdk": "^8.5.0",
+    "@task4-2/shared": "1.0.0"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "extends": "../../../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "../../../services",
+    "outDir": "../../.builds/dist/notification",
+    "tsBuildInfoFile": "../../.temp/notification.tsbuildinfo",
+    "paths": {
+      "@task4-2/shared": ["../../../services/shared/src/index.ts"]
+    }
+  },
+  "include": [
+    "../../../services/notification/src/**/*.ts",
+    "../../../services/shared/src/**/*.ts"
+  ]
+}

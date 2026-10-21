@@ -1,0 +1,10 @@
+{
+  "name": "process",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b ../../.delivery/configuration/typescript/process.tsconfig.json",
+    "docker:build": "docker build --build-arg SERVICE=process -f ../../.delivery/configuration/docker/Dockerfile ../..",
+    "start": "node ../../.delivery/.builds/dist/process/index.js"
+  }
+}

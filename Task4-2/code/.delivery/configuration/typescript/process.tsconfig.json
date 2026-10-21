@@ -1,0 +1,11 @@
+{
+  "extends": "../../../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "../../../services/process/src",
+    "outDir": "../../.builds/dist/process",
+    "tsBuildInfoFile": "../../.temp/process.tsbuildinfo"
+  },
+  "include": [
+    "../../../services/process/src/**/*.ts"
+  ]
+}
