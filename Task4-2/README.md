@@ -11,6 +11,7 @@
 - [Стек Camunda и контейнер развёртывания процесса](code/.delivery/configuration/compose/compose.yaml)
 - [Payment Orchestrator](code/.delivery/configuration/compose/orchestrator.compose.yaml)
 - [Worker-сервисы](code/.delivery/configuration/compose/workers.compose.yaml)
+- [Переменные окружения](code/.env)
 - [Dockerfile сервисов](code/.delivery/configuration/docker/Dockerfile)
 - [Dockerfile развёртывания процесса](code/.delivery/configuration/docker/deploy-process.Dockerfile)
 
